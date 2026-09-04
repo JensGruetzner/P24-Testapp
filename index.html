@@ -27,7 +27,15 @@
         <span class="chevron" aria-hidden="true">⌄</span>
       </summary>
       <div class="card-body">
-        <p class="hint" id="serialSupportHint">Connect device via WebSerial</p>
+        <p class="hint" id="serialSupportHint">Select transport and connect</p>
+        <label class="field-line">
+          <span>Transport</span>
+          <select id="transportMode">
+            <option value="auto">Auto</option>
+            <option value="webserial">WebSerial</option>
+            <option value="webusb">WebUSB CDC/ACM</option>
+          </select>
+        </label>
         <div class="button-row two">
           <button id="connectBtn" class="primary" type="button"><span>🔗</span> Connect</button>
           <button id="disconnectBtn" class="danger-outline" type="button"><span>⛓️‍💥</span> Disconnect</button>
@@ -105,12 +113,22 @@
       </div>
     </details>
 
-    <pre id="log" class="visually-hidden" aria-live="polite"></pre>
+    <details class="card collapsible-card debug-card">
+      <summary class="section-title">
+        <span class="section-icon" aria-hidden="true">🧪</span>
+        <h2>Diagnostics</h2>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="card-body">
+        <div id="diag" class="diag-grid"></div>
+        <pre id="log" class="log-panel" aria-live="polite"></pre>
+      </div>
+    </details>
     <footer class="app-footer">🛡 Secure Connection</footer>
   </main>
   <dialog id="helpDialog">
     <h2>Hosting note</h2>
-    <p>This app must be served from HTTPS or localhost. Do not open it via file://.</p>
+    <p>This app must be served from HTTPS or localhost. Do not open it via file://. On Android, STM32 CDC/ACM devices are opened via WebUSB.</p>
     <button id="closeHelpBtn" type="button">Close</button>
   </dialog>
   <script type="module" src="./app.js"></script>

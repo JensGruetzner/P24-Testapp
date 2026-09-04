@@ -105,3 +105,48 @@ dialog::backdrop { background: rgba(0,0,0,.28); }
   .tab { font-size: clamp(0.48rem, 2.45vw, 0.66rem); padding-inline: 0; }
   h2 { font-size: 0.98rem; }
 }
+
+
+.field-line {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.65rem 0 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.field-line select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  padding: 0.58rem 0.75rem;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+.debug-card { margin-top: 0.65rem; }
+.diag-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.9rem;
+  background: #f5faf7;
+  border: 1px solid var(--border);
+  font-size: 0.74rem;
+}
+.diag-key { color: var(--muted); }
+.diag-value { font-weight: 700; color: var(--text); text-align: right; }
+.log-panel {
+  display: block;
+  max-height: 11rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.65rem 0 0;
+  padding: 0.65rem;
+  border-radius: 0.9rem;
+  background: #102019;
+  color: #d8f7e7;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}

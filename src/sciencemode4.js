@@ -722,6 +722,218 @@ export class WebSerialTransport {
   }
 }
 
+export class WebUsbCdcAcmTransport {
+  constructor({ baudRate = 115200, dataBits = 8, stopBits = 1, parity = "none", filters = null, packetSize = 64 } = {}) {
+    this.options = { baudRate, dataBits, stopBits, parity, packetSize };
+    this.filters = filters ?? [
+      { vendorId: 0x0483, productId: 0x5740 },
+      { vendorId: 0x0483 },
+      { classCode: 0x02 },
+      { classCode: 0x0a },
+    ];
+    this.device = null;
+    this.configurationValue = null;
+    this.controlInterfaceNumber = null;
+    this.controlAlternateSetting = 0;
+    this.dataInterfaceNumber = null;
+    this.dataAlternateSetting = 0;
+    this.inEndpointNumber = null;
+    this.outEndpointNumber = null;
+    this.inPacketSize = packetSize;
+    this.onBytes = null;
+    this.reading = false;
+  }
+
+  static isSupported() { return typeof navigator !== "undefined" && "usb" in navigator; }
+
+  async requestDevice(filters = this.filters) {
+    if (!WebUsbCdcAcmTransport.isSupported()) throw new ScienceModeError("WebUSB API is not available in this browser/context");
+    this.device = await navigator.usb.requestDevice({ filters });
+    return this.device;
+  }
+
+  async open(device = this.device) {
+    if (!device) throw new ScienceModeError("No USB device selected");
+    this.device = device;
+    await this.device.open();
+
+    if (this.device.configuration === null) {
+      const configValue = this.device.configurations?.[0]?.configurationValue ?? 1;
+      await this.device.selectConfiguration(configValue);
+    }
+
+    this.findCdcAcmInterfaces();
+
+    if (this.dataInterfaceNumber === null) {
+      throw new ScienceModeError("No CDC/ACM bulk data interface found on selected USB device");
+    }
+
+    // Claim data interface first because some Android stacks only expose the
+    // bulk pair as the usable interface. Control interface is used if available.
+    await this.device.claimInterface(this.dataInterfaceNumber);
+    try { await this.device.selectAlternateInterface(this.dataInterfaceNumber, this.dataAlternateSetting); } catch {}
+
+    if (this.controlInterfaceNumber !== null && this.controlInterfaceNumber !== this.dataInterfaceNumber) {
+      try {
+        await this.device.claimInterface(this.controlInterfaceNumber);
+        try { await this.device.selectAlternateInterface(this.controlInterfaceNumber, this.controlAlternateSetting); } catch {}
+      } catch (error) {
+        // Keep going if data interface is usable; many CDC devices do not need
+        // line coding to be set explicitly after enumeration.
+        console.warn("Could not claim CDC control interface", error);
+      }
+    }
+
+    try { await this.setLineCoding(); } catch (error) { console.warn("SET_LINE_CODING failed; continuing", error); }
+    try { await this.setControlLineState(true, true); } catch (error) { console.warn("SET_CONTROL_LINE_STATE failed; continuing", error); }
+    this.startReadLoop();
+  }
+
+  findCdcAcmInterfaces() {
+    const configuration = this.device.configuration;
+    if (!configuration) throw new ScienceModeError("USB device has no active configuration");
+    this.configurationValue = configuration.configurationValue;
+
+    let control = null;
+    let data = null;
+
+    for (const iface of configuration.interfaces) {
+      for (const alt of iface.alternates) {
+        const bulkIn = alt.endpoints.find((ep) => ep.type === "bulk" && ep.direction === "in");
+        const bulkOut = alt.endpoints.find((ep) => ep.type === "bulk" && ep.direction === "out");
+        if (!control && (alt.interfaceClass === 0x02 || alt.interfaceSubclass === 0x02)) control = { iface, alt };
+        if (!data && alt.interfaceClass === 0x0a && bulkIn && bulkOut) data = { iface, alt, bulkIn, bulkOut };
+      }
+    }
+
+    // Some CDC implementations expose only one interface or do not report class
+    // codes as expected. Fall back to the first interface with a bulk IN/OUT pair.
+    if (!data) {
+      for (const iface of configuration.interfaces) {
+        for (const alt of iface.alternates) {
+          const bulkIn = alt.endpoints.find((ep) => ep.type === "bulk" && ep.direction === "in");
+          const bulkOut = alt.endpoints.find((ep) => ep.type === "bulk" && ep.direction === "out");
+          if (bulkIn && bulkOut) { data = { iface, alt, bulkIn, bulkOut }; break; }
+        }
+        if (data) break;
+      }
+    }
+
+    if (!data) return;
+    if (!control) control = data;
+
+    this.controlInterfaceNumber = control.iface.interfaceNumber;
+    this.controlAlternateSetting = control.alt.alternateSetting ?? 0;
+    this.dataInterfaceNumber = data.iface.interfaceNumber;
+    this.dataAlternateSetting = data.alt.alternateSetting ?? 0;
+    this.inEndpointNumber = data.bulkIn.endpointNumber;
+    this.outEndpointNumber = data.bulkOut.endpointNumber;
+    this.inPacketSize = data.bulkIn.packetSize || this.options.packetSize || 64;
+  }
+
+  describeInterface() {
+    return `config ${this.configurationValue}, ctl ${this.controlInterfaceNumber}, data ${this.dataInterfaceNumber}, IN ${this.inEndpointNumber}, OUT ${this.outEndpointNumber}`;
+  }
+
+  async setLineCoding() {
+    const targetInterface = this.controlInterfaceNumber ?? this.dataInterfaceNumber;
+    if (targetInterface === null) return;
+    const data = new ArrayBuffer(7);
+    const view = new DataView(data);
+    view.setUint32(0, this.options.baudRate, true);
+    view.setUint8(4, this.stopBitsToUsb(this.options.stopBits));
+    view.setUint8(5, this.parityToUsb(this.options.parity));
+    view.setUint8(6, this.options.dataBits);
+
+    await this.device.controlTransferOut({
+      requestType: "class",
+      recipient: "interface",
+      request: 0x20,
+      value: 0,
+      index: targetInterface,
+    }, data);
+  }
+
+  async setControlLineState(dtr, rts) {
+    const targetInterface = this.controlInterfaceNumber ?? this.dataInterfaceNumber;
+    if (targetInterface === null) return;
+    const value = (dtr ? 1 : 0) | (rts ? 2 : 0);
+    await this.device.controlTransferOut({
+      requestType: "class",
+      recipient: "interface",
+      request: 0x22,
+      value,
+      index: targetInterface,
+    });
+  }
+
+  stopBitsToUsb(stopBits) {
+    if (stopBits === 1) return 0;
+    if (stopBits === 1.5) return 1;
+    if (stopBits === 2) return 2;
+    return 0;
+  }
+
+  parityToUsb(parity) {
+    return ({ none: 0, odd: 1, even: 2, mark: 3, space: 4 })[String(parity).toLowerCase()] ?? 0;
+  }
+
+  async write(bytes) {
+    if (!this.device || this.outEndpointNumber === null) throw new ScienceModeError("USB CDC/ACM device is not open");
+    const result = await this.device.transferOut(this.outEndpointNumber, bytes);
+    if (result.status === "stall") {
+      await this.device.clearHalt("out", this.outEndpointNumber);
+      throw new ScienceModeError("USB transferOut stalled; halt cleared, please retry");
+    }
+    if (result.status !== "ok") throw new ScienceModeError(`USB transferOut failed: ${result.status}`);
+  }
+
+  startReadLoop() {
+    if (this.reading) return;
+    this.reading = true;
+    (async () => {
+      try {
+        while (this.reading && this.device?.opened && this.inEndpointNumber !== null) {
+          const result = await this.device.transferIn(this.inEndpointNumber, this.inPacketSize || 64);
+          if (result.status === "stall") {
+            await this.device.clearHalt("in", this.inEndpointNumber);
+            continue;
+          }
+          if (result.status !== "ok") continue;
+          const data = result.data ? new Uint8Array(result.data.buffer.slice(result.data.byteOffset, result.data.byteOffset + result.data.byteLength)) : new Uint8Array();
+          if (data.length && this.onBytes) this.onBytes(data);
+        }
+      } catch (error) {
+        if (this.reading) console.error("WebUSB CDC/ACM read error", error);
+      } finally {
+        this.reading = false;
+      }
+    })();
+  }
+
+  async close() {
+    this.reading = false;
+    if (!this.device) return;
+
+    try { if (this.controlInterfaceNumber !== null) await this.setControlLineState(false, false); } catch {}
+    try { if (this.dataInterfaceNumber !== null) await this.device.releaseInterface(this.dataInterfaceNumber); } catch {}
+    try {
+      if (this.controlInterfaceNumber !== null && this.controlInterfaceNumber !== this.dataInterfaceNumber) {
+        await this.device.releaseInterface(this.controlInterfaceNumber);
+      }
+    } catch {}
+    try { if (this.device.opened) await this.device.close(); } catch {}
+
+    this.device = null;
+    this.controlInterfaceNumber = null;
+    this.controlAlternateSetting = 0;
+    this.dataInterfaceNumber = null;
+    this.dataAlternateSetting = 0;
+    this.inEndpointNumber = null;
+    this.outEndpointNumber = null;
+  }
+}
+
 export class NodeSerialTransport {
   constructor({ path, baudRate = 115200, SerialPortClass = null, ...rest } = {}) {
     this.path = path;

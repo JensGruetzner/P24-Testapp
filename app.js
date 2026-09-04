@@ -1,6 +1,7 @@
 import {
   DeviceP24,
   WebSerialTransport,
+  WebUsbCdcAcmTransport,
   MidLevelChannelConfiguration,
   ChannelPoint,
 } from "./src/index.js";
@@ -20,6 +21,7 @@ function createDefaultChannels() {
 const state = {
   connected: false,
   mock: false,
+  transportType: "auto",
   device: null,
   transport: null,
   activeChannel: 0,
@@ -37,6 +39,8 @@ const el = {
   updateBtn: $("updateBtn"),
   stopBtn: $("stopBtn"),
   mockMode: $("mockMode"),
+  transportMode: $("transportMode"),
+  diag: $("diag"),
   armStimulation: $("armStimulation"),
   serialOut: $("serialOut"),
   versionOut: $("versionOut"),
@@ -57,6 +61,45 @@ const el = {
   closeHelpBtn: $("closeHelpBtn"),
 };
 
+
+
+function transportLabel(type) {
+  if (type === "webserial") return "WebSerial";
+  if (type === "webusb") return "WebUSB CDC/ACM";
+  return "Auto";
+}
+
+function isProbablyAndroid() {
+  return /Android/i.test(navigator.userAgent || "");
+}
+
+function updateDiagnostics(extra = {}) {
+  if (!el.diag) return;
+  const data = {
+    "Secure context": String(window.isSecureContext),
+    "WebUSB available": String("usb" in navigator),
+    "WebSerial available": String("serial" in navigator),
+    "Selected transport": el.transportMode?.value || "auto",
+    "Active transport": state.connected ? transportLabel(state.transportType) : "—",
+    "User agent": navigator.userAgent,
+    ...extra,
+  };
+  el.diag.innerHTML = Object.entries(data).map(([key, value]) =>
+    `<span class="diag-key">${escapeHtml(key)}</span><span class="diag-value">${escapeHtml(value)}</span>`
+  ).join("");
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>\"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
+}
+
+function preferredTransportOrder(mode) {
+  if (mode === "webserial") return ["webserial"];
+  if (mode === "webusb") return ["webusb"];
+  // Desktop: use native WebSerial first. Android: use WebUSB CDC/ACM first.
+  return isProbablyAndroid() ? ["webusb", "webserial"] : ["webserial", "webusb"];
+}
+
 function log(message, type = "info") {
   const time = new Date().toLocaleTimeString();
   el.log.textContent += `[${time}] ${type.toUpperCase()}: ${message}\n`;
@@ -65,7 +108,8 @@ function log(message, type = "info") {
 
 function setConnected(connected) {
   state.connected = connected;
-  el.status.textContent = connected ? (state.mock ? "Connected to mock device" : "Connected") : "Disconnected";
+  el.status.textContent = connected ? (state.mock ? "Connected to mock device" : `Connected via ${transportLabel(state.transportType)}`) : "Disconnected";
+  updateDiagnostics();
   el.dot.classList.toggle("connected", connected);
   el.connectBtn.disabled = connected;
   el.disconnectBtn.disabled = !connected;
@@ -192,8 +236,12 @@ class MockDevice {
 
 async function connect() {
   state.mock = el.mockMode.checked;
+  const selectedMode = el.transportMode.value;
+  const errors = [];
+
   try {
     if (state.mock) {
+      state.transportType = "mock";
       state.device = new MockDevice();
       state.transport = null;
       await state.device.initialize();
@@ -202,17 +250,58 @@ async function connect() {
       return;
     }
 
-    if (!WebSerialTransport.isSupported()) {
-      throw new Error("Web Serial API is not available in this browser/context.");
+    for (const mode of preferredTransportOrder(selectedMode)) {
+      try {
+        if (mode === "webserial") {
+          if (!WebSerialTransport.isSupported()) throw new Error("WebSerial not available");
+          state.transportType = "webserial";
+          state.transport = new WebSerialTransport({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" });
+          state.device = new DeviceP24(state.transport, { debug: true });
+          log("Opening WebSerial device picker...");
+          await state.transport.requestPort([{ usbVendorId: 0x0483, usbProductId: 0x5740 }]);
+          await state.transport.open();
+          await state.device.initialize();
+          setConnected(true);
+          log("Device connected via WebSerial");
+          return;
+        }
+
+        if (mode === "webusb") {
+          if (!WebUsbCdcAcmTransport.isSupported()) throw new Error("WebUSB not available");
+          state.transportType = "webusb";
+          state.transport = new WebUsbCdcAcmTransport({
+            baudRate: 115200,
+            dataBits: 8,
+            stopBits: 1,
+            parity: "none",
+            filters: [
+              { vendorId: 0x0483, productId: 0x5740 },
+              { vendorId: 0x0483 },
+              { classCode: 0x02 },
+              { classCode: 0x0a },
+            ],
+          });
+          state.device = new DeviceP24(state.transport, { debug: true });
+          log("Opening WebUSB device picker...");
+          const usbDevice = await state.transport.requestDevice();
+          log(`Selected USB device: VID 0x${usbDevice.vendorId.toString(16)} PID 0x${usbDevice.productId.toString(16)}`);
+          await state.transport.open();
+          updateDiagnostics({ "USB interface": state.transport.describeInterface() });
+          await state.device.initialize();
+          setConnected(true);
+          log("Device connected via WebUSB CDC/ACM");
+          return;
+        }
+      } catch (error) {
+        errors.push(`${transportLabel(mode)}: ${error.message}`);
+        log(`${transportLabel(mode)} failed: ${error.message}`, "error");
+        try { if (state.transport) await state.transport.close(); } catch {}
+        state.transport = null;
+        state.device = null;
+      }
     }
 
-    state.transport = new WebSerialTransport({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" });
-    state.device = new DeviceP24(state.transport, { debug: true });
-    await state.transport.requestPort([{ usbVendorId: 0x0483, usbProductId: 0x5740 }]);
-    await state.transport.open();
-    await state.device.initialize();
-    setConnected(true);
-    log("Device connected via WebSerial");
+    throw new Error(errors.join(" | ") || "No supported transport available.");
   } catch (error) {
     log(error.message, "error");
     await disconnect(true);
@@ -282,11 +371,19 @@ async function stopMidLevel() {
 }
 
 function updateSupportHint() {
-  if (WebSerialTransport.isSupported()) {
-    el.serialSupportHint.textContent = "Connect device via WebSerial";
+  const serial = WebSerialTransport.isSupported();
+  const usb = WebUsbCdcAcmTransport.isSupported();
+  if (serial && usb) {
+    el.serialSupportHint.textContent = "Desktop: prefer WebSerial. Android: prefer WebUSB CDC/ACM.";
+  } else if (usb) {
+    el.serialSupportHint.textContent = "Connect STM32 CDC device via WebUSB CDC/ACM.";
+  } else if (serial) {
+    el.serialSupportHint.textContent = "Connect device via WebSerial.";
   } else {
-    el.serialSupportHint.textContent = "WebSerial not available here. Mock mode still works.";
+    el.serialSupportHint.textContent = "WebUSB/WebSerial not available here. Mock mode still works.";
   }
+  if (el.transportMode) el.transportMode.value = isProbablyAndroid() ? "webusb" : "webserial";
+  updateDiagnostics();
 }
 
 function installButtonFeedback() {
@@ -304,6 +401,7 @@ function initUi() {
   state.mock = false;
   state.channels = createDefaultChannels();
   el.mockMode.checked = false;
+  if (el.transportMode) el.transportMode.value = isProbablyAndroid() ? "webusb" : "webserial";
   el.armStimulation.checked = false;
   el.channelEnable.checked = false;
   el.currentSlider.value = 0;
@@ -314,6 +412,7 @@ function initUi() {
   [el.currentSlider, el.pulseWidthSlider, el.periodSlider].forEach((slider) => slider.addEventListener("input", handleChannelInput));
   el.channelEnable.addEventListener("change", handleChannelInput);
   el.connectBtn.addEventListener("click", connect);
+  el.transportMode.addEventListener("change", () => updateDiagnostics());
   el.disconnectBtn.addEventListener("click", () => disconnect(false));
   el.serialBtn.addEventListener("click", readSerialNumber);
   el.versionBtn.addEventListener("click", readVersion);
