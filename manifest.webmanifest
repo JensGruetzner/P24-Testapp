@@ -1,0 +1,9 @@
+{
+  "name": "TestApp P24 Science",
+  "short_name": "P24 TestApp",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7faf8",
+  "theme_color": "#006b3f",
+  "icons": []
+}

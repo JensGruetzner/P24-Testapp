@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#006b3f" />
+  <title>TestApp P24 Science</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48" role="img"><path d="M6 25h9l4-12 8 24 5-12h10" /></svg>
+      </div>
+      <div>
+        <h1>TestApp P24 Science</h1>
+      </div>
+      <button class="icon-button" id="helpBtn" type="button" aria-label="Help">?</button>
+    </header>
+
+    <details class="card collapsible-card" aria-labelledby="connection-title">
+      <summary class="section-title">
+        <span class="section-icon" aria-hidden="true">🔗</span>
+        <h2 id="connection-title">Connection</h2>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="card-body">
+        <p class="hint" id="serialSupportHint">Connect device via WebSerial</p>
+        <div class="button-row two">
+          <button id="connectBtn" class="primary" type="button"><span>🔗</span> Connect</button>
+          <button id="disconnectBtn" class="danger-outline" type="button"><span>⛓️‍💥</span> Disconnect</button>
+        </div>
+        <label class="switch-line mock-toggle">
+          <input id="mockMode" type="checkbox" />
+          <span class="switch-control" aria-hidden="true"></span>
+          <span>Use mock mode for UI testing</span>
+        </label>
+        <div class="status-line"><span id="connectionDot" class="dot"></span><span id="connectionStatus">Disconnected</span></div>
+      </div>
+    </details>
+
+    <details class="card collapsible-card" aria-labelledby="device-title">
+      <summary class="section-title">
+        <span class="section-icon" aria-hidden="true">ⓘ</span>
+        <h2 id="device-title">Device Information</h2>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="card-body">
+        <div class="info-grid">
+          <button id="serialBtn" class="secondary" type="button"><span>▣</span> Read Serial Number</button>
+          <output id="serialOut" class="info-box">—</output>
+          <button id="versionBtn" class="secondary" type="button"><span>□</span> Read Version</button>
+          <output id="versionOut" class="info-box">—</output>
+        </div>
+      </div>
+    </details>
+
+    <details class="card collapsible-card stimulation-card" aria-labelledby="stim-title">
+      <summary class="section-title">
+        <span class="section-icon" aria-hidden="true">⚡</span>
+        <h2 id="stim-title">Mid-Level Stimulation</h2>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="card-body">
+        <div class="button-row three">
+          <button id="initBtn" class="primary" type="button"><span>▶</span> Init</button>
+          <button id="updateBtn" class="accent" type="button"><span>↻</span> Update</button>
+          <button id="stopBtn" class="danger-outline" type="button"><span>■</span> Stop</button>
+        </div>
+
+        <div class="safety-strip">
+          <label class="switch-line compact-switch">
+            <input id="armStimulation" type="checkbox" />
+            <span class="switch-control" aria-hidden="true"></span>
+            <span>Enable real stimulation commands</span>
+          </label>
+        </div>
+
+        <div class="tabs" id="channelTabs" role="tablist" aria-label="Stimulation channels"></div>
+
+        <div class="channel-panel">
+          <label class="switch-line enable-line">
+            <input id="channelEnable" type="checkbox" />
+            <span class="switch-control" aria-hidden="true"></span>
+            <span>Enable channel</span>
+          </label>
+
+          <div class="slider-block">
+            <div class="slider-head"><div><strong>Current</strong><small>0–130 mA</small></div><output id="currentValue">0 mA</output></div>
+            <input id="currentSlider" type="range" min="0" max="130" step="1" value="0" />
+          </div>
+
+          <div class="slider-block">
+            <div class="slider-head"><div><strong>Pulse width</strong><small>50–1500 µs · Step size 10 µs</small></div><output id="pulseWidthValue">300 µs</output></div>
+            <input id="pulseWidthSlider" type="range" min="50" max="1500" step="10" value="300" />
+          </div>
+
+          <div class="slider-block">
+            <div class="slider-head"><div><strong>Pulse repetition period</strong><small>1–1000 ms</small></div><output id="periodValue">50 ms</output></div>
+            <input id="periodSlider" type="range" min="1" max="1000" step="1" value="50" />
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <pre id="log" class="visually-hidden" aria-live="polite"></pre>
+    <footer class="app-footer">🛡 Secure Connection</footer>
+  </main>
+  <dialog id="helpDialog">
+    <h2>Hosting note</h2>
+    <p>This app must be served from HTTPS or localhost. Do not open it via file://.</p>
+    <button id="closeHelpBtn" type="button">Close</button>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
